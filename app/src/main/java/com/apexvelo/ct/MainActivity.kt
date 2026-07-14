@@ -8,8 +8,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.apexvelo.ct.core.theme.ApexVeloTheme
+import com.apexvelo.ct.feature.device.ui.DevicePreviewScreen
 import com.apexvelo.ct.feature.home.HomeScreen
 import com.apexvelo.ct.feature.map.MapScreen
+
+private enum class AppScreen {
+    HOME,
+    PHONE_NAVIGATION,
+    DEVICE_PREVIEW
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -18,18 +25,29 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ApexVeloTheme {
-                var showMap by rememberSaveable {
-                    mutableStateOf(false)
+                var currentScreen by rememberSaveable {
+                    mutableStateOf(AppScreen.HOME)
                 }
 
-                if (showMap) {
-                    MapScreen()
-                } else {
-                    HomeScreen(
-                        onStartClick = {
-                            showMap = true
-                        }
-                    )
+                when (currentScreen) {
+                    AppScreen.HOME -> {
+                        HomeScreen(
+                            onStartClick = {
+                                currentScreen = AppScreen.PHONE_NAVIGATION
+                            },
+                            onDevicePreviewClick = {
+                                currentScreen = AppScreen.DEVICE_PREVIEW
+                            }
+                        )
+                    }
+
+                    AppScreen.PHONE_NAVIGATION -> {
+                        MapScreen()
+                    }
+
+                    AppScreen.DEVICE_PREVIEW -> {
+                        DevicePreviewScreen()
+                    }
                 }
             }
         }

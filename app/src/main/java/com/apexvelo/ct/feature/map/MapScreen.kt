@@ -28,7 +28,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.apexvelo.ct.feature.navigation.simulator.PreviewRoute
+import com.apexvelo.ct.feature.navigation.simulator.RideSimulator
 import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
@@ -46,49 +49,36 @@ import org.maplibre.android.style.layers.PropertyFactory.lineJoin
 import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.sources.GeoJsonSource
-import android.os.Handler
-import android.os.Looper
-import org.maplibre.android.camera.CameraUpdateFactory
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 
 private const val MAP_STYLE_URL =
     "https://tiles.openfreemap.org/styles/liberty"
 
-private const val ROUTE_SOURCE_ID = "apex-route-source"
-private const val ROUTE_OUTLINE_LAYER_ID = "apex-route-outline-layer"
-private const val ROUTE_LAYER_ID = "apex-route-layer"
+private const val ROUTE_SOURCE_ID =
+    "apex-route-source"
 
-private const val RIDER_SOURCE_ID = "apex-rider-source"
-private const val RIDER_LAYER_ID = "apex-rider-layer"
+private const val ROUTE_OUTLINE_LAYER_ID =
+    "apex-route-outline-layer"
 
-private val previewRoute = listOf(
-    LatLng(18.52040, 73.85670),
-    LatLng(18.52083, 73.85677),
-    LatLng(18.52123, 73.85688),
-    LatLng(18.52158, 73.85708),
-    LatLng(18.52184, 73.85740),
-    LatLng(18.52198, 73.85782),
-    LatLng(18.52202, 73.85830),
-    LatLng(18.52210, 73.85882),
-    LatLng(18.52230, 73.85927),
-    LatLng(18.52264, 73.85960),
-    LatLng(18.52307, 73.85979),
-    LatLng(18.52353, 73.85984),
-    LatLng(18.52400, 73.85991),
-    LatLng(18.52442, 73.86012),
-    LatLng(18.52472, 73.86049)
-)
+private const val ROUTE_LAYER_ID =
+    "apex-route-layer"
 
-private val initialRiderLocation = previewRoute.first()
+private const val RIDER_SOURCE_ID =
+    "apex-rider-source"
+
+private const val RIDER_LAYER_ID =
+    "apex-rider-layer"
+
+private val initialRiderLocation =
+    PreviewRoute.initialLocation
 
 @Composable
 fun MapScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(
+                MaterialTheme.colorScheme.background
+            )
     ) {
         NavigationMap(
             modifier = Modifier.fillMaxSize()
@@ -100,7 +90,7 @@ fun MapScreen() {
                 .statusBarsPadding()
                 .padding(
                     horizontal = 12.dp,
-                    vertical = 8.dp
+                    vertical = 10.dp
                 )
         )
 
@@ -123,12 +113,22 @@ private fun NavigationMap(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    val simulatorHolder = remember {
+        arrayOfNulls<RideSimulator>(1)
+    }
+
     val mapView = remember {
         MapView(context).apply {
             onCreate(Bundle())
 
             getMapAsync { map ->
-                configureNavigationMap(map)
+                configureNavigationMap(
+                    map = map,
+                    onSimulatorCreated = { simulator ->
+                        simulatorHolder[0]?.stop()
+                        simulatorHolder[0] = simulator
+                    }
+                )
             }
         }
     }
@@ -137,20 +137,41 @@ private fun NavigationMap(
         lifecycleOwner,
         mapView
     ) {
-        val observer = LifecycleEventObserver { _, event ->
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START -> mapView.onStart()
                 Lifecycle.Event.ON_RESUME -> mapView.onResume()
                 Lifecycle.Event.ON_PAUSE -> mapView.onPause()
                 Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_DESTROY -> Unit
                 else -> Unit
             }
         }
 
-        lifecycleOwner.lifecycle.addObserver(observer)
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+
+        // The screen may be composed after these lifecycle events already happened.
+        // Bring MapView immediately into the Activity's current lifecycle state.
+        if (
+            lifecycleOwner.lifecycle.currentState
+                .isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            mapView.onStart()
+        }
+
+        if (
+            lifecycleOwner.lifecycle.currentState
+                .isAtLeast(Lifecycle.State.RESUMED)
+        ) {
+            mapView.onResume()
+        }
 
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+
+            simulatorHolder[0]?.stop()
+            simulatorHolder[0] = null
+
             mapView.onPause()
             mapView.onStop()
             mapView.onDestroy()
@@ -164,7 +185,8 @@ private fun NavigationMap(
 }
 
 private fun configureNavigationMap(
-    map: MapLibreMap
+    map: MapLibreMap,
+    onSimulatorCreated: (RideSimulator) -> Unit
 ) {
     map.uiSettings.apply {
         isCompassEnabled = false
@@ -177,38 +199,49 @@ private fun configureNavigationMap(
         isScrollGesturesEnabled = true
     }
 
-    /*
-     * Camera padding is ordered:
-     * left, top, right, bottom.
-     *
-     * A large bottom padding shifts the logical map centre upward,
-     * leaving the rider visually closer to the bottom of the screen.
-     */
-    map.cameraPosition = CameraPosition.Builder()
-        .target(initialRiderLocation)
-        .zoom(16.6)
-        .bearing(18.0)
-        .tilt(52.0)
-        .padding(
-            0.0,
-            160.0,
-            0.0,
-            620.0
-        )
-        .build()
+    map.cameraPosition =
+        CameraPosition.Builder()
+            .target(initialRiderLocation)
+            .zoom(16.6)
+            .bearing(18.0)
+            .tilt(52.0)
+            .padding(
+                0.0,
+                160.0,
+                0.0,
+                620.0
+            )
+            .build()
 
     map.setStyle(
-        Style.Builder().fromUri(MAP_STYLE_URL)
+        Style.Builder().fromUri(
+            MAP_STYLE_URL
+        )
     ) { style ->
         addPreviewRoute(style)
         addRiderMarker(style)
-        startPreviewRide(map, style)
+
+        val simulator =
+            createPreviewRideSimulator(
+                map = map,
+                style = style
+            )
+
+        onSimulatorCreated(simulator)
+        simulator.start()
     }
 }
 
 private fun addPreviewRoute(
     style: Style
 ) {
+    val coordinates =
+        PreviewRoute.points.joinToString(
+            separator = ",\n"
+        ) { point ->
+            "[${point.longitude}, ${point.latitude}]"
+        }
+
     val routeGeoJson = """
         {
           "type": "Feature",
@@ -216,21 +249,7 @@ private fun addPreviewRoute(
           "geometry": {
             "type": "LineString",
             "coordinates": [
-              [73.85670, 18.52040],
-              [73.85677, 18.52083],
-              [73.85688, 18.52123],
-              [73.85708, 18.52158],
-              [73.85740, 18.52184],
-              [73.85782, 18.52198],
-              [73.85830, 18.52202],
-              [73.85882, 18.52210],
-              [73.85927, 18.52230],
-              [73.85960, 18.52264],
-              [73.85979, 18.52307],
-              [73.85984, 18.52353],
-              [73.85991, 18.52400],
-              [73.86012, 18.52442],
-              [73.86049, 18.52472]
+              $coordinates
             ]
           }
         }
@@ -251,8 +270,12 @@ private fun addPreviewRoute(
             lineColor("#101218"),
             lineWidth(13f),
             lineOpacity(0.90f),
-            lineCap(Property.LINE_CAP_ROUND),
-            lineJoin(Property.LINE_JOIN_ROUND)
+            lineCap(
+                Property.LINE_CAP_ROUND
+            ),
+            lineJoin(
+                Property.LINE_JOIN_ROUND
+            )
         )
     )
 
@@ -264,8 +287,12 @@ private fun addPreviewRoute(
             lineColor("#00D4FF"),
             lineWidth(8f),
             lineOpacity(1f),
-            lineCap(Property.LINE_CAP_ROUND),
-            lineJoin(Property.LINE_JOIN_ROUND)
+            lineCap(
+                Property.LINE_CAP_ROUND
+            ),
+            lineJoin(
+                Property.LINE_JOIN_ROUND
+            )
         )
     )
 }
@@ -273,24 +300,12 @@ private fun addPreviewRoute(
 private fun addRiderMarker(
     style: Style
 ) {
-    val riderGeoJson = """
-        {
-          "type": "Feature",
-          "properties": {},
-          "geometry": {
-            "type": "Point",
-            "coordinates": [
-              ${'$'}{initialRiderLocation.longitude},
-              ${'$'}{initialRiderLocation.latitude}
-            ]
-          }
-        }
-    """.trimIndent()
-
     style.addSource(
         GeoJsonSource(
             RIDER_SOURCE_ID,
-            riderGeoJson
+            createRiderGeoJson(
+                initialRiderLocation
+            )
         )
     )
 
@@ -307,51 +322,49 @@ private fun addRiderMarker(
     )
 }
 
-private fun startPreviewRide(
+private fun createPreviewRideSimulator(
     map: MapLibreMap,
     style: Style
-) {
-    val handler = Handler(Looper.getMainLooper())
-    var routeIndex = 0
-
-    val updateRide = object : Runnable {
-        override fun run() {
-            if (routeIndex >= previewRoute.lastIndex) {
-                routeIndex = 0
-            }
-
-            val currentPoint = previewRoute[routeIndex]
-            val nextPoint = previewRoute[routeIndex + 1]
-            val bearing = calculateBearing(currentPoint, nextPoint)
-
+): RideSimulator {
+    return RideSimulator(
+        route = PreviewRoute.points,
+        updateIntervalMillis = 1_500L,
+        simulatedSpeedKmh = 38f,
+        onFrame = { frame ->
             updateRiderMarker(
                 style = style,
-                location = currentPoint
+                location = LatLng(
+                    frame.currentLocation.latitude,
+                    frame.currentLocation.longitude
+                )
             )
-
             updateNavigationCamera(
                 map = map,
-                location = currentPoint,
-                bearing = bearing
-            )
-
-            routeIndex++
-
-            handler.postDelayed(
-                this,
-                1_500L
+                location = LatLng(
+                    frame.currentLocation.latitude,
+                    frame.currentLocation.longitude
+                ),
+                bearing = frame.bearingDegrees
             )
         }
-    }
-
-    handler.post(updateRide)
+    )
 }
 
 private fun updateRiderMarker(
     style: Style,
     location: LatLng
 ) {
-    val riderGeoJson = """
+    style.getSourceAs<GeoJsonSource>(
+        RIDER_SOURCE_ID
+    )?.setGeoJson(
+        createRiderGeoJson(location)
+    )
+}
+
+private fun createRiderGeoJson(
+    location: LatLng
+): String {
+    return """
         {
           "type": "Feature",
           "properties": {},
@@ -364,10 +377,6 @@ private fun updateRiderMarker(
           }
         }
     """.trimIndent()
-
-    style.getSourceAs<GeoJsonSource>(
-        RIDER_SOURCE_ID
-    )?.setGeoJson(riderGeoJson)
 }
 
 private fun updateNavigationCamera(
@@ -375,49 +384,29 @@ private fun updateNavigationCamera(
     location: LatLng,
     bearing: Double
 ) {
-    val cameraPosition = CameraPosition.Builder()
-        .target(location)
-        .zoom(16.6)
-        .bearing(bearing)
-        .tilt(52.0)
-        .padding(
-            0.0,
-            160.0,
-            0.0,
-            620.0
-        )
-        .build()
+    val cameraPosition =
+        CameraPosition.Builder()
+            .target(location)
+            .zoom(16.6)
+            .bearing(bearing)
+            .tilt(52.0)
+            .padding(
+                0.0,
+                160.0,
+                0.0,
+                620.0
+            )
+            .build()
 
     map.animateCamera(
-        CameraUpdateFactory.newCameraPosition(cameraPosition),
+        CameraUpdateFactory
+            .newCameraPosition(
+                cameraPosition
+            ),
         1_200
     )
 }
 
-private fun calculateBearing(
-    start: LatLng,
-    end: LatLng
-): Double {
-    val startLatitude = Math.toRadians(start.latitude)
-    val startLongitude = Math.toRadians(start.longitude)
-    val endLatitude = Math.toRadians(end.latitude)
-    val endLongitude = Math.toRadians(end.longitude)
-
-    val longitudeDifference = endLongitude - startLongitude
-
-    val y = sin(longitudeDifference) * cos(endLatitude)
-    val x =
-        cos(startLatitude) * sin(endLatitude) -
-                sin(startLatitude) *
-                cos(endLatitude) *
-                cos(longitudeDifference)
-
-    return (
-            Math.toDegrees(
-                atan2(y, x)
-            ) + 360.0
-            ) % 360.0
-}
 @Composable
 private fun CompactNavigationHeader(
     modifier: Modifier = Modifier
@@ -425,7 +414,10 @@ private fun CompactNavigationHeader(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        color = MaterialTheme
+            .colorScheme
+            .surface
+            .copy(alpha = 0.92f),
         shadowElevation = 6.dp
     ) {
         Row(
@@ -433,37 +425,51 @@ private fun CompactNavigationHeader(
                 horizontal = 16.dp,
                 vertical = 9.dp
             ),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement =
+                Arrangement.SpaceBetween,
+            verticalAlignment =
+                Alignment.CenterVertically
         ) {
             Column {
                 Text(
                     text = "250 m",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
 
                 Text(
                     text = "TURN LEFT",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface
+                        .copy(alpha = 0.56f),
                     fontSize = 9.sp
                 )
             }
 
             Column(
-                horizontalAlignment = Alignment.End
+                horizontalAlignment =
+                    Alignment.End
             ) {
                 Text(
                     text = "18 min",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface,
                     fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight =
+                        FontWeight.SemiBold
                 )
 
                 Text(
                     text = "8.2 km remaining",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface
+                        .copy(alpha = 0.56f),
                     fontSize = 9.sp
                 )
             }
@@ -478,7 +484,10 @@ private fun CompactManeuverPanel(
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        color = MaterialTheme
+            .colorScheme
+            .surface
+            .copy(alpha = 0.94f),
         shadowElevation = 8.dp
     ) {
         Row(
@@ -486,11 +495,14 @@ private fun CompactManeuverPanel(
                 horizontal = 18.dp,
                 vertical = 12.dp
             ),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment =
+                Alignment.CenterVertically
         ) {
             Text(
                 text = "↰",
-                color = MaterialTheme.colorScheme.secondary,
+                color = MaterialTheme
+                    .colorScheme
+                    .secondary,
                 fontSize = 38.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -502,31 +514,42 @@ private fun CompactManeuverPanel(
             ) {
                 Text(
                     text = "Turn left",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
 
                 Text(
                     text = "FC Road",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.60f),
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface
+                        .copy(alpha = 0.60f),
                     fontSize = 12.sp
                 )
             }
 
             Column(
-                horizontalAlignment = Alignment.End
+                horizontalAlignment =
+                    Alignment.End
             ) {
                 Text(
                     text = "38",
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
 
                 Text(
                     text = "km/h",
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.56f),
+                    color = MaterialTheme
+                        .colorScheme
+                        .onSurface
+                        .copy(alpha = 0.56f),
                     fontSize = 9.sp
                 )
             }
