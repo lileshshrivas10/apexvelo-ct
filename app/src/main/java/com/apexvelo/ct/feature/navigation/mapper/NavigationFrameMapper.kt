@@ -17,14 +17,15 @@ class NavigationFrameMapper(
     fun map(frame: NavigationFrame): DeviceMapFrame {
         val riderPosition = NormalizedPoint(
             x = 0.50f,
-            y = 0.80f
+            y = 0.82f
         )
 
-        val visibleRadiusMeters = when {
-            frame.speedKmh < 25f -> 220.0
-            frame.speedKmh < 50f -> 350.0
-            frame.speedKmh < 80f -> 500.0
-            else -> 700.0
+        val visibleDistanceMeters = when {
+            frame.speedKmh < 20f -> 110.0
+            frame.speedKmh < 40f -> 160.0
+            frame.speedKmh < 70f -> 230.0
+            frame.speedKmh < 100f -> 320.0
+            else -> 420.0
         }
 
         val transformedRoute =
@@ -32,7 +33,7 @@ class NavigationFrameMapper(
                 route = frame.route,
                 currentLocation = frame.currentLocation,
                 riderPosition = riderPosition,
-                visibleRadiusMeters = visibleRadiusMeters
+                visibleDistanceMeters  = visibleDistanceMeters
             )
 
         return DeviceMapFrame(
@@ -73,13 +74,14 @@ class NavigationFrameMapper(
             if (
                 index == 0 ||
                 index == route.lastIndex ||
-                index % 2 != 0
+                index % 2 != 0 ||
+                !point.isInsideExtendedViewport()
             ) {
                 return@forEachIndexed
             }
 
             val branchLength =
-                if (index % 4 == 0) 0.22f else 0.16f
+                if (index % 4 == 0) 0.20f else 0.14f
 
             roads += RoadPolyline(
                 type = RoadType.SECONDARY,
@@ -87,7 +89,7 @@ class NavigationFrameMapper(
                     point,
                     NormalizedPoint(
                         x = point.x - branchLength,
-                        y = point.y - 0.04f
+                        y = point.y - 0.035f
                     )
                 )
             )
@@ -98,7 +100,7 @@ class NavigationFrameMapper(
                     point,
                     NormalizedPoint(
                         x = point.x + branchLength,
-                        y = point.y + 0.03f
+                        y = point.y + 0.035f
                     )
                 )
             )
@@ -107,6 +109,10 @@ class NavigationFrameMapper(
         return roads
     }
 
+    private fun NormalizedPoint.isInsideExtendedViewport(): Boolean {
+        return x in -0.15f..1.15f &&
+                y in -0.15f..1.15f
+    }
     private fun generateBuildings(
         route: List<NormalizedPoint>
     ): List<BuildingPolygon> {
@@ -117,6 +123,9 @@ class NavigationFrameMapper(
         return route
             .drop(1)
             .dropLast(1)
+            .filter { point ->
+                point.isInsideExtendedViewport()
+            }
             .filterIndexed { index, _ ->
                 index % 2 == 0
             }
