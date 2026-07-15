@@ -153,15 +153,21 @@ private fun NavigationHeader(
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment =
+                Alignment.CenterHorizontally
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment =
+                    Alignment.CenterVertically
             ) {
                 Text(
-                    text = frame.maneuverSymbol,
+                    text = if (frame.isArrived) {
+                        "🏁"
+                    } else {
+                        frame.maneuverSymbol
+                    },
                     color = Color.White,
-                    fontSize = 36.sp,
+                    fontSize = 34.sp,
                     fontWeight = FontWeight.Black
                 )
 
@@ -170,9 +176,17 @@ private fun NavigationHeader(
                 )
 
                 Text(
-                    text = "${frame.distanceToTurnMeters} m",
+                    text = if (frame.isArrived) {
+                        "ARRIVED"
+                    } else {
+                        "${frame.distanceToTurnMeters} m"
+                    },
                     color = Color.White,
-                    fontSize = 30.sp,
+                    fontSize = if (frame.isArrived) {
+                        26.sp
+                    } else {
+                        30.sp
+                    },
                     fontWeight = FontWeight.Black,
                     maxLines = 1
                 )

@@ -10,11 +10,13 @@ import org.maplibre.android.geometry.LatLng
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 class RideSimulator(
     private val route: List<LatLng>,
     private val updateIntervalMillis: Long = 50L,
     private val segmentDurationMillis: Long = 1_500L,
+    private val arrivalHoldMillis: Long = 3_000L,
     private val simulatedSpeedKmh: Float = 38f,
     private val onFrame: (NavigationFrame) -> Unit
 ) {
@@ -23,6 +25,7 @@ class RideSimulator(
 
     private var routeIndex: Int = 0
     private var segmentStartTimeMillis: Long = 0L
+    private var arrivalStartTimeMillis: Long? = null
     private var isRunning: Boolean = false
 
     private val updateRunnable: Runnable = object : Runnable {
@@ -31,16 +34,17 @@ class RideSimulator(
                 return
             }
 
+            val now = SystemClock.uptimeMillis()
+
             if (routeIndex >= route.lastIndex) {
-                routeIndex = 0
-                segmentStartTimeMillis = SystemClock.uptimeMillis()
+                routeIndex = route.lastIndex - 1
             }
 
             val segmentStart = route[routeIndex]
             val segmentEnd = route[routeIndex + 1]
 
             val elapsedMillis =
-                SystemClock.uptimeMillis() - segmentStartTimeMillis
+                now - segmentStartTimeMillis
 
             val progress = (
                     elapsedMillis.toFloat() /
@@ -53,8 +57,35 @@ class RideSimulator(
                 progress = progress
             )
 
-            val remainingSegmentCount =
-                route.lastIndex - routeIndex
+            val remainingDistanceMeters =
+                calculateRemainingRouteDistanceMeters(
+                    currentLocation = currentLocation,
+                    currentSegmentEndIndex = routeIndex + 1
+                )
+
+            val isArrived =
+                remainingDistanceMeters <= ARRIVAL_THRESHOLD_METERS
+
+            val maneuver = determinePreviewManeuver(
+                index = routeIndex,
+                isArrived = isArrived
+            )
+
+            val speedForFrame =
+                if (isArrived) 0f else simulatedSpeedKmh
+
+            val remainingDurationSeconds =
+                if (
+                    isArrived ||
+                    speedForFrame <= 0f
+                ) {
+                    0
+                } else {
+                    (
+                            remainingDistanceMeters /
+                                    (speedForFrame / 3.6f)
+                            ).toInt()
+                }
 
             val frame = NavigationFrame(
                 currentLocation = currentLocation.toGeoPoint(),
@@ -63,15 +94,29 @@ class RideSimulator(
                     start = segmentStart,
                     end = segmentEnd
                 ),
-                speedKmh = simulatedSpeedKmh,
-                maneuver = determinePreviewManeuver(routeIndex),
-                distanceToTurnMeters =
-                    (remainingSegmentCount * 45).coerceAtLeast(0),
-                streetName = "FC Road",
+                speedKmh = speedForFrame,
+                maneuver = maneuver,
+                distanceToTurnMeters = if (isArrived) {
+                    remainingDistanceMeters
+                        .toInt()
+                        .coerceAtLeast(0)
+                } else {
+                    formatDisplayDistance(
+                        remainingDistanceMeters
+                    )
+                },
+                streetName = if (isArrived) {
+                    "Destination"
+                } else {
+                    "FC Road"
+                },
                 remainingDistanceMeters =
-                    (remainingSegmentCount * 70).coerceAtLeast(0),
+                    remainingDistanceMeters
+                        .toInt()
+                        .coerceAtLeast(0),
                 remainingDurationSeconds =
-                    (remainingSegmentCount * 12).coerceAtLeast(0),
+                    remainingDurationSeconds
+                        .coerceAtLeast(0),
                 route = route.map { point ->
                     point.toGeoPoint()
                 }
@@ -79,15 +124,14 @@ class RideSimulator(
 
             onFrame(frame)
 
-            if (progress >= 1f) {
-                routeIndex++
+            if (isArrived) {
+                handleArrival(now)
+            } else {
+                arrivalStartTimeMillis = null
 
-                if (routeIndex >= route.lastIndex) {
-                    routeIndex = 0
+                if (progress >= 1f) {
+                    moveToNextSegment(now)
                 }
-
-                segmentStartTimeMillis =
-                    SystemClock.uptimeMillis()
             }
 
             handler.postDelayed(
@@ -103,8 +147,11 @@ class RideSimulator(
         }
 
         isRunning = true
-        segmentStartTimeMillis =
-            SystemClock.uptimeMillis()
+
+        if (segmentStartTimeMillis == 0L) {
+            segmentStartTimeMillis =
+                SystemClock.uptimeMillis()
+        }
 
         handler.post(updateRunnable)
     }
@@ -116,11 +163,48 @@ class RideSimulator(
 
     fun restart() {
         stop()
-
-        routeIndex = 0
-        segmentStartTimeMillis = 0L
-
+        resetSimulation()
         start()
+    }
+
+    private fun handleArrival(
+        currentTimeMillis: Long
+    ) {
+        val arrivalStartedAt =
+            arrivalStartTimeMillis
+
+        if (arrivalStartedAt == null) {
+            arrivalStartTimeMillis =
+                currentTimeMillis
+            return
+        }
+
+        val arrivalElapsedMillis =
+            currentTimeMillis - arrivalStartedAt
+
+        if (arrivalElapsedMillis >= arrivalHoldMillis) {
+            resetSimulation()
+        }
+    }
+
+    private fun moveToNextSegment(
+        currentTimeMillis: Long
+    ) {
+        routeIndex++
+
+        if (routeIndex >= route.lastIndex) {
+            routeIndex = route.lastIndex - 1
+        }
+
+        segmentStartTimeMillis =
+            currentTimeMillis
+    }
+
+    private fun resetSimulation() {
+        routeIndex = 0
+        segmentStartTimeMillis =
+            SystemClock.uptimeMillis()
+        arrivalStartTimeMillis = null
     }
 
     private fun interpolate(
@@ -143,21 +227,94 @@ class RideSimulator(
     }
 
     private fun determinePreviewManeuver(
-        index: Int
+        index: Int,
+        isArrived: Boolean
     ): Maneuver {
+        if (isArrived) {
+            return Maneuver.ARRIVE
+        }
+
         return when {
             index < 3 -> Maneuver.STRAIGHT
             index < 7 -> Maneuver.RIGHT
             index < 11 -> Maneuver.LEFT
-            else -> Maneuver.ARRIVE
+            else -> Maneuver.STRAIGHT
         }
     }
 
-    private fun LatLng.toGeoPoint(): GeoPoint {
-        return GeoPoint(
-            latitude = latitude,
-            longitude = longitude
-        )
+    private fun calculateRemainingRouteDistanceMeters(
+        currentLocation: LatLng,
+        currentSegmentEndIndex: Int
+    ): Double {
+        if (route.isEmpty()) {
+            return 0.0
+        }
+
+        if (currentSegmentEndIndex !in route.indices) {
+            return 0.0
+        }
+
+        var remainingDistance =
+            calculateDistanceMeters(
+                start = currentLocation,
+                end = route[currentSegmentEndIndex]
+            )
+
+        for (
+        index in currentSegmentEndIndex
+                until route.lastIndex
+        ) {
+            remainingDistance +=
+                calculateDistanceMeters(
+                    start = route[index],
+                    end = route[index + 1]
+                )
+        }
+
+        return remainingDistance
+    }
+
+    private fun calculateDistanceMeters(
+        start: LatLng,
+        end: LatLng
+    ): Double {
+        val startLatitude =
+            Math.toRadians(start.latitude)
+
+        val endLatitude =
+            Math.toRadians(end.latitude)
+
+        val latitudeDifference =
+            Math.toRadians(
+                end.latitude - start.latitude
+            )
+
+        val longitudeDifference =
+            Math.toRadians(
+                end.longitude - start.longitude
+            )
+
+        val latitudeSin =
+            sin(latitudeDifference / 2.0)
+
+        val longitudeSin =
+            sin(longitudeDifference / 2.0)
+
+        val haversine =
+            latitudeSin * latitudeSin +
+                    cos(startLatitude) *
+                    cos(endLatitude) *
+                    longitudeSin *
+                    longitudeSin
+
+        val angularDistance =
+            2.0 * atan2(
+                sqrt(haversine),
+                sqrt(1.0 - haversine)
+            )
+
+        return EARTH_RADIUS_METERS *
+                angularDistance
     }
 
     private fun calculateBearing(
@@ -195,5 +352,55 @@ class RideSimulator(
                     atan2(y, x)
                 ) + 360.0
                 ) % 360.0
+    }
+
+    private fun LatLng.toGeoPoint(): GeoPoint {
+        return GeoPoint(
+            latitude = latitude,
+            longitude = longitude
+        )
+    }
+
+    private fun formatDisplayDistance(
+        distanceMeters: Double
+    ): Int {
+        val distance = distanceMeters
+            .toInt()
+            .coerceAtLeast(0)
+
+        return when {
+            distance > 200 -> {
+                roundToNearest(
+                    value = distance,
+                    interval = 10
+                )
+            }
+
+            distance > 50 -> {
+                roundToNearest(
+                    value = distance,
+                    interval = 5
+                )
+            }
+
+            else -> distance
+        }
+    }
+
+    private fun roundToNearest(
+        value: Int,
+        interval: Int
+    ): Int {
+        return (
+                (value + interval / 2) /
+                        interval
+                ) * interval
+    }
+    private companion object {
+        const val EARTH_RADIUS_METERS =
+            6_371_000.0
+
+        const val ARRIVAL_THRESHOLD_METERS =
+            8.0
     }
 }

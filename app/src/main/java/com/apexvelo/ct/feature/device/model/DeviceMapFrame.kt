@@ -24,9 +24,13 @@ data class DeviceMapFrame(
     val buildings: List<BuildingPolygon>,
     val activeRoute: List<NormalizedPoint>,
     val riderPosition: NormalizedPoint,
+    val destinationPosition: NormalizedPoint?,
     val riderBearingDegrees: Float,
+
     val maneuverSymbol: String,
     val distanceToTurnMeters: Int,
     val streetName: String,
-    val speedKmh: Int
+    val speedKmh: Int,
+
+    val isArrived: Boolean
 )

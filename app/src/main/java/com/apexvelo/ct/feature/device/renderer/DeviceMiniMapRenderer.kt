@@ -48,6 +48,10 @@ fun DeviceMiniMapRenderer(
             drawDeviceRoute(
                 route = frame.activeRoute
             )
+
+            drawDestinationFlag(
+                destinationPosition = frame.destinationPosition
+            )
         }
 
         drawDeviceRider(

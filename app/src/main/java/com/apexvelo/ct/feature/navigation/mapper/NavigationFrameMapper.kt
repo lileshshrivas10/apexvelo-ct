@@ -33,9 +33,22 @@ class NavigationFrameMapper(
                 route = frame.route,
                 currentLocation = frame.currentLocation,
                 riderPosition = riderPosition,
-                visibleDistanceMeters  = visibleDistanceMeters
+                visibleDistanceMeters = visibleDistanceMeters
             )
 
+        val isArrived =
+            frame.maneuver == Maneuver.ARRIVE
+
+        val destination =
+            transformedRoute
+                .lastOrNull()
+                ?.takeIf { point ->
+                    isArrived ||
+                            (
+                                    point.x in 0f..1f &&
+                                            point.y in 0f..1f
+                                    )
+                }
         return DeviceMapFrame(
             surroundingRoads = generateNearbyRoads(
                 route = transformedRoute
@@ -45,14 +58,22 @@ class NavigationFrameMapper(
             ),
             activeRoute = transformedRoute,
             riderPosition = riderPosition,
+            destinationPosition = destination,
             riderBearingDegrees =
                 frame.bearingDegrees.toFloat(),
+
             maneuverSymbol =
                 frame.maneuver.toSymbol(),
             distanceToTurnMeters =
                 frame.distanceToTurnMeters,
             streetName = frame.streetName,
-            speedKmh = frame.speedKmh.toInt()
+            speedKmh = if (isArrived) {
+                0
+            } else {
+                frame.speedKmh.toInt()
+            },
+
+            isArrived = isArrived
         )
     }
 
