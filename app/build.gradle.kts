@@ -47,7 +47,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
 
     // MapLibre Native Android SDK
-    implementation("org.maplibre.gl:android-sdk:13.0.2")
+    implementation("org.maplibre.gl:android-sdk-opengl:13.0.2")
 
     testImplementation(libs.junit)
 

@@ -5,16 +5,18 @@ import com.apexvelo.ct.feature.device.model.DeviceMapFrame
 import com.apexvelo.ct.feature.device.model.NormalizedPoint
 import com.apexvelo.ct.feature.device.model.RoadPolyline
 import com.apexvelo.ct.feature.device.model.RoadType
+import com.apexvelo.ct.feature.navigation.camera.DeviceCameraTransform
 import com.apexvelo.ct.feature.navigation.model.Maneuver
 import com.apexvelo.ct.feature.navigation.model.NavigationFrame
-import com.apexvelo.ct.feature.navigation.camera.DeviceCameraTransform
 
 class NavigationFrameMapper(
     private val cameraTransform: DeviceCameraTransform =
         DeviceCameraTransform()
 ) {
 
-    fun map(frame: NavigationFrame): DeviceMapFrame {
+    fun map(
+        frame: NavigationFrame
+    ): DeviceMapFrame {
         val riderPosition = NormalizedPoint(
             x = 0.50f,
             y = 0.82f
@@ -28,7 +30,7 @@ class NavigationFrameMapper(
             else -> 420.0
         }
 
-        val transformedRoute =
+        val transformedRoute: List<NormalizedPoint> =
             cameraTransform.transformRoute(
                 route = frame.route,
                 currentLocation = frame.currentLocation,
@@ -36,19 +38,17 @@ class NavigationFrameMapper(
                 visibleDistanceMeters = visibleDistanceMeters
             )
 
-        val isArrived =
+        val isArrived: Boolean =
             frame.maneuver == Maneuver.ARRIVE
 
-        val destination =
+        val destination: NormalizedPoint? =
             transformedRoute
                 .lastOrNull()
                 ?.takeIf { point ->
                     isArrived ||
-                            (
-                                    point.x in 0f..1f &&
-                                            point.y in 0f..1f
-                                    )
+                            point.isInsideViewport()
                 }
+
         return DeviceMapFrame(
             surroundingRoads = generateNearbyRoads(
                 route = transformedRoute
@@ -61,18 +61,19 @@ class NavigationFrameMapper(
             destinationPosition = destination,
             riderBearingDegrees =
                 frame.bearingDegrees.toFloat(),
-
             maneuverSymbol =
                 frame.maneuver.toSymbol(),
             distanceToTurnMeters =
-                frame.distanceToTurnMeters,
+                frame.distanceToTurnMeters
+                    .coerceAtLeast(0),
             streetName = frame.streetName,
             speedKmh = if (isArrived) {
                 0
             } else {
-                frame.speedKmh.toInt()
+                frame.speedKmh
+                    .toInt()
+                    .coerceAtLeast(0)
             },
-
             isArrived = isArrived
         )
     }
@@ -86,23 +87,36 @@ class NavigationFrameMapper(
 
         val roads = mutableListOf<RoadPolyline>()
 
+        // Main road under the active route.
         roads += RoadPolyline(
             points = route,
             type = RoadType.PRIMARY
         )
 
         route.forEachIndexed { index, point ->
-            if (
+            val shouldSkip =
                 index == 0 ||
-                index == route.lastIndex ||
-                index % 2 != 0 ||
-                !point.isInsideExtendedViewport()
-            ) {
+                        index == route.lastIndex ||
+                        index % 2 != 0 ||
+                        !point.isInsideExtendedViewport()
+
+            if (shouldSkip) {
                 return@forEachIndexed
             }
 
             val branchLength =
-                if (index % 4 == 0) 0.20f else 0.14f
+                if (index % 4 == 0) {
+                    0.20f
+                } else {
+                    0.14f
+                }
+
+            val verticalOffset =
+                if (index % 4 == 0) {
+                    -0.045f
+                } else {
+                    0.035f
+                }
 
             roads += RoadPolyline(
                 type = RoadType.SECONDARY,
@@ -110,7 +124,7 @@ class NavigationFrameMapper(
                     point,
                     NormalizedPoint(
                         x = point.x - branchLength,
-                        y = point.y - 0.035f
+                        y = point.y + verticalOffset
                     )
                 )
             )
@@ -121,7 +135,7 @@ class NavigationFrameMapper(
                     point,
                     NormalizedPoint(
                         x = point.x + branchLength,
-                        y = point.y + 0.035f
+                        y = point.y - verticalOffset
                     )
                 )
             )
@@ -130,10 +144,6 @@ class NavigationFrameMapper(
         return roads
     }
 
-    private fun NormalizedPoint.isInsideExtendedViewport(): Boolean {
-        return x in -0.15f..1.15f &&
-                y in -0.15f..1.15f
-    }
     private fun generateBuildings(
         route: List<NormalizedPoint>
     ): List<BuildingPolygon> {
@@ -150,17 +160,24 @@ class NavigationFrameMapper(
             .filterIndexed { index, _ ->
                 index % 2 == 0
             }
-            .flatMap { point ->
+            .flatMapIndexed { index, point ->
+                val verticalOffset =
+                    if (index % 2 == 0) {
+                        0.01f
+                    } else {
+                        -0.015f
+                    }
+
                 listOf(
                     createBuilding(
                         centerX = point.x - 0.13f,
-                        centerY = point.y,
+                        centerY = point.y + verticalOffset,
                         width = 0.09f,
                         height = 0.055f
                     ),
                     createBuilding(
                         centerX = point.x + 0.13f,
-                        centerY = point.y + 0.015f,
+                        centerY = point.y - verticalOffset,
                         width = 0.08f,
                         height = 0.05f
                     )
@@ -180,23 +197,33 @@ class NavigationFrameMapper(
         return BuildingPolygon(
             points = listOf(
                 NormalizedPoint(
-                    centerX - halfWidth,
-                    centerY - halfHeight
+                    x = centerX - halfWidth,
+                    y = centerY - halfHeight
                 ),
                 NormalizedPoint(
-                    centerX + halfWidth,
-                    centerY - halfHeight
+                    x = centerX + halfWidth,
+                    y = centerY - halfHeight
                 ),
                 NormalizedPoint(
-                    centerX + halfWidth,
-                    centerY + halfHeight
+                    x = centerX + halfWidth,
+                    y = centerY + halfHeight
                 ),
                 NormalizedPoint(
-                    centerX - halfWidth,
-                    centerY + halfHeight
+                    x = centerX - halfWidth,
+                    y = centerY + halfHeight
                 )
             )
         )
+    }
+
+    private fun NormalizedPoint.isInsideViewport(): Boolean {
+        return x in 0f..1f &&
+                y in 0f..1f
+    }
+
+    private fun NormalizedPoint.isInsideExtendedViewport(): Boolean {
+        return x in -0.15f..1.15f &&
+                y in -0.15f..1.15f
     }
 
     private fun Maneuver.toSymbol(): String {
@@ -210,7 +237,7 @@ class NavigationFrameMapper(
             Maneuver.SHARP_RIGHT -> "↷"
             Maneuver.U_TURN -> "↶"
             Maneuver.ROUNDABOUT -> "⟳"
-            Maneuver.ARRIVE -> "●"
+            Maneuver.ARRIVE -> "🏁"
         }
     }
 }

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.rotate
 import com.apexvelo.ct.feature.device.model.DeviceMapFrame
@@ -15,8 +16,14 @@ fun DeviceMiniMapRenderer(
     frame: DeviceMapFrame,
     modifier: Modifier = Modifier
 ) {
+    val continuousBearing = remember {
+        ContinuousBearing(frame.riderBearingDegrees)
+    }
+    val bearingTarget = continuousBearing.update(
+        frame.riderBearingDegrees
+    )
     val animatedBearing by animateFloatAsState(
-        targetValue = frame.riderBearingDegrees,
+        targetValue = bearingTarget,
         animationSpec = tween(
             durationMillis = 600,
             easing = LinearOutSlowInEasing

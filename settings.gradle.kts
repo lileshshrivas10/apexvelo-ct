@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "ApexVeloCT"
 include(":app")
+include(":device-simulator")

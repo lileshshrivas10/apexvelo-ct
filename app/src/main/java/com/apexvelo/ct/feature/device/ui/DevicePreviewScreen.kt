@@ -56,7 +56,6 @@ fun DevicePreviewScreen() {
         RideSimulator(
             route = PreviewRoute.points,
             updateIntervalMillis = 50L,
-            segmentDurationMillis = 1_500L,
             simulatedSpeedKmh = 38f,
             onFrame = { navigationFrame ->
                 deviceFrame = frameMapper.map(
@@ -153,21 +152,15 @@ private fun NavigationHeader(
         contentAlignment = Alignment.Center
     ) {
         Column(
-            horizontalAlignment =
-                Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
-                verticalAlignment =
-                    Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (frame.isArrived) {
-                        "🏁"
-                    } else {
-                        frame.maneuverSymbol
-                    },
+                    text = frame.maneuverSymbol,
                     color = Color.White,
-                    fontSize = 34.sp,
+                    fontSize = 36.sp,
                     fontWeight = FontWeight.Black
                 )
 
@@ -176,17 +169,9 @@ private fun NavigationHeader(
                 )
 
                 Text(
-                    text = if (frame.isArrived) {
-                        "ARRIVED"
-                    } else {
-                        "${frame.distanceToTurnMeters} m"
-                    },
+                    text = "${frame.distanceToTurnMeters} m",
                     color = Color.White,
-                    fontSize = if (frame.isArrived) {
-                        26.sp
-                    } else {
-                        30.sp
-                    },
+                    fontSize = 30.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 1
                 )

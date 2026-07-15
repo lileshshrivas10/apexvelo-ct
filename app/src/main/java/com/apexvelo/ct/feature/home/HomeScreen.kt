@@ -20,7 +20,11 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun HomeScreen(
     onStartClick: () -> Unit,
-    onDevicePreviewClick: () -> Unit
+    onDevicePreviewClick: () -> Unit,
+    connectionStatus: String,
+    isDeviceConnected: Boolean,
+    onConnectDeviceClick: () -> Unit,
+    onDisconnectDeviceClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -58,6 +62,29 @@ fun HomeScreen(
             onClick = onDevicePreviewClick
         ) {
             Text("DEVICE PREVIEW")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(
+            text = connectionStatus,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.72f)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedButton(
+            onClick = if (isDeviceConnected) {
+                onDisconnectDeviceClick
+            } else {
+                onConnectDeviceClick
+            }
+        ) {
+            Text(
+                if (isDeviceConnected) "DISCONNECT DEVICE"
+                else "CONNECT DEVICE"
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
