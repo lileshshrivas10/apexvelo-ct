@@ -1,14 +1,18 @@
 package com.apexvelo.ct.feature.navigation.mapper
 
+import com.apexvelo.ct.feature.device.model.BuildingPolygon
 import com.apexvelo.ct.feature.device.model.DeviceMapFrame
 import com.apexvelo.ct.feature.device.model.NormalizedPoint
-import com.apexvelo.ct.feature.device.model.PreviewDeviceMap
-import com.apexvelo.ct.feature.navigation.model.GeoPoint
+import com.apexvelo.ct.feature.device.model.RoadPolyline
+import com.apexvelo.ct.feature.device.model.RoadType
 import com.apexvelo.ct.feature.navigation.model.Maneuver
 import com.apexvelo.ct.feature.navigation.model.NavigationFrame
-import kotlin.math.cos
+import com.apexvelo.ct.feature.navigation.camera.DeviceCameraTransform
 
-class NavigationFrameMapper {
+class NavigationFrameMapper(
+    private val cameraTransform: DeviceCameraTransform =
+        DeviceCameraTransform()
+) {
 
     fun map(frame: NavigationFrame): DeviceMapFrame {
         val riderPosition = NormalizedPoint(
@@ -16,82 +20,153 @@ class NavigationFrameMapper {
             y = 0.80f
         )
 
-        return DeviceMapFrame(
-            surroundingRoads = PreviewDeviceMap.frame.surroundingRoads,
-            activeRoute = normalizeRoute(
+        val visibleRadiusMeters = when {
+            frame.speedKmh < 25f -> 220.0
+            frame.speedKmh < 50f -> 350.0
+            frame.speedKmh < 80f -> 500.0
+            else -> 700.0
+        }
+
+        val transformedRoute =
+            cameraTransform.transformRoute(
                 route = frame.route,
                 currentLocation = frame.currentLocation,
                 riderPosition = riderPosition,
-                speedKmh = frame.speedKmh
+                visibleRadiusMeters = visibleRadiusMeters
+            )
+
+        return DeviceMapFrame(
+            surroundingRoads = generateNearbyRoads(
+                route = transformedRoute
             ),
+            buildings = generateBuildings(
+                route = transformedRoute
+            ),
+            activeRoute = transformedRoute,
             riderPosition = riderPosition,
-            riderBearingDegrees = frame.bearingDegrees.toFloat(),
-            maneuverSymbol = frame.maneuver.toSymbol(),
-            distanceToTurnMeters = frame.distanceToTurnMeters,
+            riderBearingDegrees =
+                frame.bearingDegrees.toFloat(),
+            maneuverSymbol =
+                frame.maneuver.toSymbol(),
+            distanceToTurnMeters =
+                frame.distanceToTurnMeters,
             streetName = frame.streetName,
             speedKmh = frame.speedKmh.toInt()
         )
     }
 
-    private fun normalizeRoute(
-        route: List<GeoPoint>,
-        currentLocation: GeoPoint,
-        riderPosition: NormalizedPoint,
-        speedKmh: Float
-    ): List<NormalizedPoint> {
-        if (route.isEmpty()) {
-            return listOf(riderPosition)
+    private fun generateNearbyRoads(
+        route: List<NormalizedPoint>
+    ): List<RoadPolyline> {
+        if (route.size < 2) {
+            return emptyList()
         }
 
-        val visibleRadiusMeters = when {
-            speedKmh < 25f -> 220.0
-            speedKmh < 50f -> 350.0
-            speedKmh < 80f -> 500.0
-            else -> 700.0
+        val roads = mutableListOf<RoadPolyline>()
+
+        roads += RoadPolyline(
+            points = route,
+            type = RoadType.PRIMARY
+        )
+
+        route.forEachIndexed { index, point ->
+            if (
+                index == 0 ||
+                index == route.lastIndex ||
+                index % 2 != 0
+            ) {
+                return@forEachIndexed
+            }
+
+            val branchLength =
+                if (index % 4 == 0) 0.22f else 0.16f
+
+            roads += RoadPolyline(
+                type = RoadType.SECONDARY,
+                points = listOf(
+                    point,
+                    NormalizedPoint(
+                        x = point.x - branchLength,
+                        y = point.y - 0.04f
+                    )
+                )
+            )
+
+            roads += RoadPolyline(
+                type = RoadType.SECONDARY,
+                points = listOf(
+                    point,
+                    NormalizedPoint(
+                        x = point.x + branchLength,
+                        y = point.y + 0.03f
+                    )
+                )
+            )
         }
 
-        val normalizedScale = 0.65 / visibleRadiusMeters
-
-        return route.map { point ->
-            val eastMeters = longitudeDistanceMeters(
-                from = currentLocation,
-                to = point
-            )
-
-            val northMeters = latitudeDistanceMeters(
-                from = currentLocation,
-                to = point
-            )
-
-            NormalizedPoint(
-                x = (
-                        riderPosition.x +
-                                eastMeters * normalizedScale
-                        ).toFloat(),
-                y = (
-                        riderPosition.y -
-                                northMeters * normalizedScale
-                        ).toFloat()
-            )
-        }
+        return roads
     }
 
-    private fun latitudeDistanceMeters(
-        from: GeoPoint,
-        to: GeoPoint
-    ): Double {
-        return (to.latitude - from.latitude) * METERS_PER_LATITUDE_DEGREE
+    private fun generateBuildings(
+        route: List<NormalizedPoint>
+    ): List<BuildingPolygon> {
+        if (route.size < 3) {
+            return emptyList()
+        }
+
+        return route
+            .drop(1)
+            .dropLast(1)
+            .filterIndexed { index, _ ->
+                index % 2 == 0
+            }
+            .flatMap { point ->
+                listOf(
+                    createBuilding(
+                        centerX = point.x - 0.13f,
+                        centerY = point.y,
+                        width = 0.09f,
+                        height = 0.055f
+                    ),
+                    createBuilding(
+                        centerX = point.x + 0.13f,
+                        centerY = point.y + 0.015f,
+                        width = 0.08f,
+                        height = 0.05f
+                    )
+                )
+            }
     }
 
-    private fun longitudeDistanceMeters(
-        from: GeoPoint,
-        to: GeoPoint
-    ): Double {
-        val latitudeRadians = Math.toRadians(from.latitude)
+    private fun createBuilding(
+        centerX: Float,
+        centerY: Float,
+        width: Float,
+        height: Float
+    ): BuildingPolygon {
+        val halfWidth = width / 2f
+        val halfHeight = height / 2f
 
-        return (
-                to.longitude - from.longitude
-                ) * METERS_PER_LATITUDE_DEGREE * cos(latitudeRadians)
+        return BuildingPolygon(
+            points = listOf(
+                NormalizedPoint(
+                    centerX - halfWidth,
+                    centerY - halfHeight
+                ),
+                NormalizedPoint(
+                    centerX + halfWidth,
+                    centerY - halfHeight
+                ),
+                NormalizedPoint(
+                    centerX + halfWidth,
+                    centerY + halfHeight
+                ),
+                NormalizedPoint(
+                    centerX - halfWidth,
+                    centerY + halfHeight
+                )
+            )
+        )
     }
 
     private fun Maneuver.toSymbol(): String {
@@ -107,9 +182,5 @@ class NavigationFrameMapper {
             Maneuver.ROUNDABOUT -> "⟳"
             Maneuver.ARRIVE -> "●"
         }
-    }
-
-    private companion object {
-        const val METERS_PER_LATITUDE_DEGREE = 111_320.0
     }
 }

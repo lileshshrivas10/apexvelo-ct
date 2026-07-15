@@ -2,6 +2,7 @@ package com.apexvelo.ct.feature.navigation.simulator
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.apexvelo.ct.feature.navigation.model.GeoPoint
 import com.apexvelo.ct.feature.navigation.model.Maneuver
 import com.apexvelo.ct.feature.navigation.model.NavigationFrame
@@ -12,7 +13,8 @@ import kotlin.math.sin
 
 class RideSimulator(
     private val route: List<LatLng>,
-    private val updateIntervalMillis: Long = 1_500L,
+    private val updateIntervalMillis: Long = 50L,
+    private val segmentDurationMillis: Long = 1_500L,
     private val simulatedSpeedKmh: Float = 38f,
     private val onFrame: (NavigationFrame) -> Unit
 ) {
@@ -20,6 +22,7 @@ class RideSimulator(
         Handler(Looper.getMainLooper())
 
     private var routeIndex: Int = 0
+    private var segmentStartTimeMillis: Long = 0L
     private var isRunning: Boolean = false
 
     private val updateRunnable: Runnable = object : Runnable {
@@ -30,36 +33,62 @@ class RideSimulator(
 
             if (routeIndex >= route.lastIndex) {
                 routeIndex = 0
+                segmentStartTimeMillis = SystemClock.uptimeMillis()
             }
 
-            val currentLocation = route[routeIndex]
-            val nextLocation = route[routeIndex + 1]
+            val segmentStart = route[routeIndex]
+            val segmentEnd = route[routeIndex + 1]
 
-            val remainingPointCount =
+            val elapsedMillis =
+                SystemClock.uptimeMillis() - segmentStartTimeMillis
+
+            val progress = (
+                    elapsedMillis.toFloat() /
+                            segmentDurationMillis.toFloat()
+                    ).coerceIn(0f, 1f)
+
+            val currentLocation = interpolate(
+                start = segmentStart,
+                end = segmentEnd,
+                progress = progress
+            )
+
+            val remainingSegmentCount =
                 route.lastIndex - routeIndex
 
             val frame = NavigationFrame(
                 currentLocation = currentLocation.toGeoPoint(),
-                nextLocation = nextLocation.toGeoPoint(),
+                nextLocation = segmentEnd.toGeoPoint(),
                 bearingDegrees = calculateBearing(
-                    start = currentLocation,
-                    end = nextLocation
+                    start = segmentStart,
+                    end = segmentEnd
                 ),
                 speedKmh = simulatedSpeedKmh,
                 maneuver = determinePreviewManeuver(routeIndex),
                 distanceToTurnMeters =
-                    remainingPointCount * 45,
+                    (remainingSegmentCount * 45).coerceAtLeast(0),
                 streetName = "FC Road",
                 remainingDistanceMeters =
-                    remainingPointCount * 70,
+                    (remainingSegmentCount * 70).coerceAtLeast(0),
                 remainingDurationSeconds =
-                    remainingPointCount * 12,
-                route = route.map { it.toGeoPoint() }
+                    (remainingSegmentCount * 12).coerceAtLeast(0),
+                route = route.map { point ->
+                    point.toGeoPoint()
+                }
             )
 
             onFrame(frame)
 
-            routeIndex++
+            if (progress >= 1f) {
+                routeIndex++
+
+                if (routeIndex >= route.lastIndex) {
+                    routeIndex = 0
+                }
+
+                segmentStartTimeMillis =
+                    SystemClock.uptimeMillis()
+            }
 
             handler.postDelayed(
                 this,
@@ -74,6 +103,9 @@ class RideSimulator(
         }
 
         isRunning = true
+        segmentStartTimeMillis =
+            SystemClock.uptimeMillis()
+
         handler.post(updateRunnable)
     }
 
@@ -84,8 +116,30 @@ class RideSimulator(
 
     fun restart() {
         stop()
+
         routeIndex = 0
+        segmentStartTimeMillis = 0L
+
         start()
+    }
+
+    private fun interpolate(
+        start: LatLng,
+        end: LatLng,
+        progress: Float
+    ): LatLng {
+        val latitude =
+            start.latitude +
+                    (end.latitude - start.latitude) * progress
+
+        val longitude =
+            start.longitude +
+                    (end.longitude - start.longitude) * progress
+
+        return LatLng(
+            latitude,
+            longitude
+        )
     }
 
     private fun determinePreviewManeuver(
@@ -137,7 +191,9 @@ class RideSimulator(
                     cos(longitudeDifference)
 
         return (
-                Math.toDegrees(atan2(y, x)) + 360.0
+                Math.toDegrees(
+                    atan2(y, x)
+                ) + 360.0
                 ) % 360.0
     }
 }

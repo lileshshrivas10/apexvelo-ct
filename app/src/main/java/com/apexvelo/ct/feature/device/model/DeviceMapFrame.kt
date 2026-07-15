@@ -15,8 +15,13 @@ data class RoadPolyline(
     val type: RoadType = RoadType.SECONDARY
 )
 
+data class BuildingPolygon(
+    val points: List<NormalizedPoint>
+)
+
 data class DeviceMapFrame(
     val surroundingRoads: List<RoadPolyline>,
+    val buildings: List<BuildingPolygon>,
     val activeRoute: List<NormalizedPoint>,
     val riderPosition: NormalizedPoint,
     val riderBearingDegrees: Float,

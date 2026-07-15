@@ -55,7 +55,8 @@ fun DevicePreviewScreen() {
     val rideSimulator = remember {
         RideSimulator(
             route = PreviewRoute.points,
-            updateIntervalMillis = 1_500L,
+            updateIntervalMillis = 50L,
+            segmentDurationMillis = 1_500L,
             simulatedSpeedKmh = 38f,
             onFrame = { navigationFrame ->
                 deviceFrame = frameMapper.map(
